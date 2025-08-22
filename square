@@ -1,0 +1,176 @@
+import numpy as np
+import cv2
+
+print(cv2.__version__)
+img = cv2.imread('Solutions/MCQ_600dpi_2016/bad.jpg')  
+original = img.copy()
+
+gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)    
+
+blurred = cv2.GaussianBlur(gray, (3, 3), 0)
+
+circles = cv2.HoughCircles(blurred, cv2.HOUGH_GRADIENT, dp=1, minDist=4,
+                          param1=40, param2=20, minRadius=7, maxRadius=10)
+
+
+# circles = cv2.HoughCircles(blurred, cv2.HOUGH_GRADIENT, dp=1, minDist=4,
+#                           param1=40, param2=20, minRadius=6, maxRadius=10)
+bubbles = []
+
+if circles is not None:
+    circles = np.round(circles[0, :]).astype("int")
+    
+    for (x, y, r) in circles:
+        bubbles.append({'center': (x, y), 'radius': r})
+        cv2.circle(img, (x, y), r, (255, 0, 0), 2)
+
+edged = cv2.Canny(blurred, 75, 200)
+thresh = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY_INV | cv2.THRESH_OTSU)[1]
+
+contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+rectangles = []
+for contour in contours:
+    epsilon = 0.02 * cv2.arcLength(contour, True)
+    approx = cv2.approxPolyDP(contour, epsilon, True)
+
+    if len(approx) == 4:
+        x, y, w, h = cv2.boundingRect(contour)
+        
+    
+    
+    
+        if w > 50 and h > 20:
+            rectangles.append((x, y, w, h))
+            cv2.rectangle(img, (x, y), (x + w, y + h), (0, 255, 0), 2)
+            inner_x = x + w  //4        # start a quarter inside
+            inner_y = y + h //4
+            inner_w = w //2
+            inner_h = h //2
+    
+            cv2.rectangle(img, (x+w//3, y), (x + w, y + h), (0, 0, 255), 2)
+
+rectangles.sort(key=lambda rect: (rect[1], rect[0]))
+print(rectangles)
+
+all_answers = {}
+options = ['A', 'B', 'C', 'D', 'E']
+
+print("MCQ ANSWER ANALYSIS USING HOUGH CIRCLES")
+print("=" * 60)
+
+
+answered_count = 0
+multiple_choice_count = 0
+unanswered_count = 0
+for rect_idx, (x, y, w, h) in enumerate(rectangles):
+    print(f"\nProcessing Rectangle {rect_idx + 1} at ({x}, {y})")
+
+
+    inner_x = x + w // 3
+    inner_y = y
+    inner_w = w - w // 3
+    inner_h = h
+    cv2.rectangle(img, (inner_x, inner_y), (inner_x + inner_w, inner_y + inner_h), (255, 0, 0), 1)
+
+   
+    inner_roi = gray[inner_y:inner_y + inner_h, inner_x:inner_x + inner_w]
+    inner_roi_blurred = cv2.GaussianBlur(inner_roi, (5, 5), 0)
+
+
+    ret ,thresh = cv2.threshold(inner_roi_blurred , 200,255, cv2.THRESH_BINARY)
+
+   
+    
+   
+
+    
+    contours, hierarchy = cv2.findContours(thresh, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+
+    
+    filled_centers = []
+    for shape in contours:
+        area = cv2.contourArea(shape)
+        if 180 < area < 280:  # Adjust based on size
+            (cx, cy), radius = cv2.minEnclosingCircle(shape)
+           
+            cx_full = int(cx) + inner_x
+            cy_full = int(cy) + inner_y
+            filled_centers.append((cx_full, cy_full))
+           
+            cv2.circle(img, (cx_full, cy_full), int(radius), (0, 0, 255), 2)
+
+    print(f"Detected {len(filled_centers)} filled marks in inner rectangle")
+
+   
+    bubbles_in_inner = []
+    for b in bubbles:
+        bx, by = b['center']
+        if inner_x <= bx <= inner_x + inner_w and inner_y <= by <= inner_y + inner_h:
+            bubbles_in_inner.append(b)
+
+    bubbles_in_inner.sort(key=lambda b: b['center'][0])  # Left to right: A, B, C, D, E
+
+    filled_options = []
+    for idx, bubble in enumerate(bubbles_in_inner):
+        cx, cy = bubble['center']
+        r = bubble['radius']
+
+        # Check if any filled center is inside this bubble
+        is_filled = False
+        for fx, fy in filled_centers:
+            dist = np.linalg.norm(np.array([cx, cy]) - np.array([fx, fy]))
+            if dist < r:
+                is_filled = True
+                break
+
+        if is_filled:
+            cv2.circle(img, (cx, cy), r, (0, 0, 255), 3)  # Red = filled
+            if idx < len(options):
+                filled_options.append(options[idx])
+                print(f"  Bubble {idx+1} ({options[idx]}): FILLED")
+        else:
+            cv2.circle(img, (cx, cy), r, (255, 0, 0), 1)  # Blue = empty
+            if idx < len(options):
+                print(f"  Bubble {idx+1} ({options[idx]}): EMPTY")
+
+        if idx < len(options):
+            cv2.putText(img, options[idx], (cx - 8, cy + 4),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 0), 1)
+
+    # Store answer
+    if filled_options:
+        all_answers[rect_idx + 1] = filled_options
+        answered_count += 1
+        if len(filled_options) > 1:
+            multiple_choice_count += 1
+    else:
+        all_answers[rect_idx + 1] = []
+        unanswered_count += 1
+
+    cv2.putText(img, f"R{rect_idx + 1}", (x, y - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+
+for q in sorted(all_answers.keys()):
+    ans = all_answers[q]
+    if len(ans) == 1:
+        print(f"Question {q}: {ans[0]}")
+    elif len(ans) > 1:
+        print(f"Question {q}: {', '.join(ans)} ← MULTIPLE")
+    else:
+        print(f"Question {q}: [Unanswered]")
+
+total = len(rectangles)
+print(f"\nTotal Questions: {total}")
+print(f"Answered: {answered_count}, Unanswered: {unanswered_count}")
+print(f"Multiple: {multiple_choice_count}")
+print(f"Completion Rate: {answered_count / total * 100:.1f}%")
+
+
+cv2.imshow('Original', original)
+cv2.imshow('MCQ Analysis', img)
+
+
+cv2.imshow('Inner Region Threshold', thresh)
+
+cv2.waitKey(0)
+cv2.destroyAllWindows()
